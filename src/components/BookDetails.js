@@ -13,6 +13,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SKINS, neobrutalist } from '../styles/theme';
 import { downloadBook, isBookCached, deleteBookCache } from '../services/offline';
+import * as api from '../services/api';
 
 const formatDuration = (seconds) => {
   if (isNaN(seconds) || seconds === null) return '00:00';
@@ -32,20 +33,64 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadFileInfo, setDownloadFileInfo] = useState({ index: 0, total: 0, filename: '' });
   const [errorMsg, setErrorMsg] = useState('');
+  const [fullBook, setFullBook] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(true);
 
   const itemId = book.itemId || book.id;
 
   useEffect(() => {
-    checkCacheState();
+    loadBookDetails();
   }, [itemId]);
 
-  const checkCacheState = async () => {
-    const cached = await isBookCached(itemId);
-    setIsCached(cached);
-    if (cached) {
-      setDownloadStatus('completed');
-    } else {
-      setDownloadStatus('idle');
+  const loadBookDetails = async () => {
+    setLoadingDetails(true);
+    setErrorMsg('');
+    try {
+      const cached = await isBookCached(itemId);
+      setIsCached(cached);
+      if (cached) {
+        setDownloadStatus('completed');
+        const cachedList = await getCachedBooks();
+        const cachedBook = cachedList.find(b => b.itemId === itemId);
+        if (cachedBook) {
+          setFullBook(cachedBook);
+          setLoadingDetails(false);
+          return;
+        }
+      } else {
+        setDownloadStatus('idle');
+      }
+
+      console.log('[BookDetails] Fetching full item details from server:', itemId);
+      const serverDetails = await api.getItemDetails(itemId);
+      
+      const normalized = {
+        id: serverDetails.itemId || serverDetails.id || itemId,
+        itemId: serverDetails.itemId || serverDetails.id || itemId,
+        title: serverDetails.title || serverDetails.media?.metadata?.title || book.title || 'Untitled',
+        author: serverDetails.author || serverDetails.media?.metadata?.authorName || book.author || 'Unknown',
+        description: serverDetails.description || serverDetails.media?.metadata?.description || book.description || '',
+        chapters: serverDetails.chapters || serverDetails.media?.chapters || [],
+        audioFiles: serverDetails.audioFiles || serverDetails.media?.audioFiles || [],
+        coverUrl: book.coverUrl || '',
+      };
+      
+      setFullBook(normalized);
+    } catch (err) {
+      console.error('[BookDetails] Error loading full book details:', err);
+      setErrorMsg('Failed to load volume details.');
+      setFullBook({
+        id: itemId,
+        itemId: itemId,
+        title: book.title || 'Untitled',
+        author: book.author || 'Unknown',
+        description: book.description || '',
+        chapters: book.chapters || [],
+        audioFiles: book.audioFiles || [],
+        coverUrl: book.coverUrl || '',
+      });
+    } finally {
+      setLoadingDetails(false);
     }
   };
 
@@ -60,8 +105,8 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
 
       await downloadBook(
         itemId,
-        book.coverUrl,
-        book.audioFiles || [],
+        fullBook.coverUrl,
+        fullBook.audioFiles || [],
         serverUrl,
         token,
         (progressData) => {
@@ -80,16 +125,17 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
             setDownloadStatus('completed');
             setDownloadProgress(1);
             setIsCached(true);
+            loadBookDetails(); // Refresh details to load from local cache now
           } else if (progressData.status === 'failed') {
             setDownloadStatus('failed');
             setErrorMsg('Cache failed. Server offline or storage error.');
           }
         },
         {
-          title: book.title,
-          author: book.author,
-          description: book.description,
-          chapters: book.chapters,
+          title: fullBook.title,
+          author: fullBook.author,
+          description: fullBook.description,
+          chapters: fullBook.chapters,
         }
       );
     } catch (err) {
@@ -109,6 +155,17 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
       setErrorMsg('Failed to clear cached files.');
     }
   };
+
+  if (loadingDetails || !fullBook) {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+        <ActivityIndicator size="large" color={theme.contrast} />
+        <Text style={[styles.loadingText, { color: theme.contrast }]}>
+          RETRIEVING ARCHIVAL RECORD...
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaScrollView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -132,16 +189,16 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
         <View style={styles.coverShadowContainer}>
           <View style={neobrutalist.shadowBg(theme.contrast, 5)} />
           <View style={[styles.coverContainer, neobrutalist.border4(theme.contrast)]}>
-            <Image source={{ uri: book.coverUrl }} style={styles.coverImage} />
+            <Image source={{ uri: fullBook.coverUrl }} style={styles.coverImage} />
           </View>
         </View>
 
         <View style={styles.titleInfo}>
           <Text style={[styles.bookTitle, { color: theme.contrast }]}>
-            {book.title.toUpperCase()}
+            {(fullBook.title || '').toUpperCase()}
           </Text>
           <Text style={[styles.bookAuthor, { color: theme.muted }]}>
-            BY: {book.author.toUpperCase()}
+            BY: {(fullBook.author || '').toUpperCase()}
           </Text>
           
           <TouchableOpacity
@@ -150,7 +207,7 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
               neobrutalist.border2(theme.contrast),
               { backgroundColor: theme.accent }
             ]}
-            onPress={() => onPlay(book)}
+            onPress={() => onPlay(fullBook)}
             activeOpacity={0.8}
           >
             <Text style={[styles.playButtonText, { color: theme.contrast }]}>
@@ -264,7 +321,7 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
             ARCHIVAL SUMMARY:
           </Text>
           <Text style={[styles.descriptionText, { color: theme.contrast }]}>
-            {book.description ? book.description.trim() : 'NO HISTORICAL RECORD IN THE VAULT.'}
+            {fullBook.description ? fullBook.description.trim() : 'NO HISTORICAL RECORD IN THE VAULT.'}
           </Text>
         </View>
       </View>
@@ -290,8 +347,8 @@ export default function BookDetails({ book, onBack, onPlay, theme = SKINS.Ledger
         </View>
 
         {/* Table Body */}
-        {book.chapters && book.chapters.length > 0 ? (
-          book.chapters.map((chapter, i) => (
+        {fullBook.chapters && fullBook.chapters.length > 0 ? (
+          fullBook.chapters.map((chapter, i) => (
             <View key={chapter.id || i} style={[styles.tableRow, { borderColor: theme.contrast }]}>
               <View style={[styles.cellNo, { borderRightColor: theme.contrast }]}>
                 <Text style={styles.cellText}>{chapter.index || i + 1}</Text>
@@ -572,5 +629,17 @@ const styles = StyleSheet.create({
     fontFamily: 'Courier',
     fontSize: 11,
     fontWeight: 'bold',
+  },
+  centerContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 30,
+  },
+  loadingText: {
+    fontFamily: 'Courier',
+    fontWeight: 'bold',
+    fontSize: 14,
+    marginTop: 12,
   },
 });
