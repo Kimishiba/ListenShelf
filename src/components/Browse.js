@@ -113,12 +113,39 @@ export default function Browse({ onSelectBook, onResumePlayback, theme = SKINS.L
       const serverUrl = session?.serverUrl;
       const token = session?.token;
 
+      // Helper to augment items with local AsyncStorage progress values
+      const setProcessedItems = async (itemsArray) => {
+        try {
+          const keys = itemsArray.map(item => `progress_${item.itemId || item.id}`);
+          const pairs = await AsyncStorage.multiGet(keys);
+          const progressMap = {};
+          pairs.forEach(([k, v]) => {
+            if (v) {
+              try {
+                const parsed = JSON.parse(v);
+                progressMap[k.replace('progress_', '')] = parsed.progress;
+              } catch(e) {}
+            }
+          });
+          const finalItems = itemsArray.map(item => {
+            const localP = progressMap[item.itemId || item.id];
+            return {
+              ...item,
+              progress: localP !== undefined ? localP : item.progress,
+            };
+          });
+          setItems(finalItems);
+        } catch(e) {
+          setItems(itemsArray);
+        }
+      };
+
       // Fetch cached/offline books first to merge or show
       const cachedBooks = await getCachedBooks();
 
       if (selectedLibraryId === 'cached') {
         // Show only downloaded books
-        setItems(cachedBooks);
+        await setProcessedItems(cachedBooks);
       } else {
         // Attempt to fetch from server if credentials exist
         if (serverUrl && token) {
@@ -159,19 +186,19 @@ export default function Browse({ onSelectBook, onResumePlayback, theme = SKINS.L
                   isCached: !!cached,
                 };
               });
-              setItems(mappedItems);
+              await setProcessedItems(mappedItems);
             } else {
               // Fallback if no library IDs could be resolved
-              setItems(mergeCachedWithMock(cachedBooks));
+              await setProcessedItems(mergeCachedWithMock(cachedBooks));
             }
           } catch (fetchErr) {
             console.warn('[Browse] Server fetch failed, using fallback mock catalog:', fetchErr);
             setErrorMsg('OFFLINE: Server inaccessible. Loaded cached/mock items.');
-            setItems(mergeCachedWithMock(cachedBooks));
+            await setProcessedItems(mergeCachedWithMock(cachedBooks));
           }
         } else {
           // No server credentials -> Use Cached + Mock
-          setItems(mergeCachedWithMock(cachedBooks));
+          await setProcessedItems(mergeCachedWithMock(cachedBooks));
         }
       }
     } catch (err) {
