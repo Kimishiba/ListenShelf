@@ -152,7 +152,7 @@ export default function Browse({ onSelectBook, onResumePlayback, theme = SKINS.L
                   title: item.media?.metadata?.title || item.title || 'Untitled',
                   author: item.media?.metadata?.authorName || item.author || 'Unknown',
                   coverUrl: cached ? cached.localCoverUrl : api.getCoverUrl(item.id),
-                  progress: item.userProgress?.progress || item.progress || (cached ? cached.progress : 0),
+                  progress: item.mediaProgress?.progress || item.userProgress?.progress || item.progress?.progress || item.progress || (cached ? cached.progress : 0),
                   description: item.media?.metadata?.description || '',
                   chapters: item.media?.chapters || [],
                   audioFiles: item.media?.audioFiles || [],
